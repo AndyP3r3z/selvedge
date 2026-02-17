@@ -7,7 +7,7 @@ from pathlib import Path
 from fabric.widgets.box import Box
 from fabric.widgets.centerbox import CenterBox
 from fabric.widgets.wayland import WaylandWindow
-from gi.repository import Gtk # type: ignore
+from gi.repository import Gtk, GObject # type: ignore
 
 CONFIG_DIR: Path = Path(__file__).parent
 _widgets: dict[str, ModuleType] = {}
@@ -24,12 +24,15 @@ def _assert_secure_module(name: str) -> None:
 		The name of the module.
 	"""
 	name = name.strip()
-	not_valid_identifier_error: str = f"'{name}' is not a valid identifier."
+	identifier: str = name.split(":")[0]
+	not_valid_identifier_error: str = f"'{identifier}' is not a valid identifier."
 	not_existing_module_error: str = f"Neither 'widgets.{name}' nor '{name}' module exist. Make sure your module inside `{CONFIG_DIR}/widgets` or in a fabric component."
 	name_not_widget_error: str = "{clss} is not a GTK widget."
 	not_existing_callable_error: str = f"No callable named 'main' in 'widgets.{name}'. Make sure your module name and function are called the same."
 	# 1. Make sure it is secure.
-	if iskeyword(name) or not name.isidentifier():
+	all_identifiers: list[str] = identifier.split(".")
+	if iskeyword(identifier) or not all([ident.isidentifier() for ident in all_identifiers]):
+		print(identifier)
 		raise ValueError(not_valid_identifier_error)
 	# 2. Make sure it exists.
 	new_module: ModuleType
@@ -39,13 +42,14 @@ def _assert_secure_module(name: str) -> None:
 			class_names: list[str]
 			module_name, *class_names = name.rsplit(":")
 			if "fabric" not in name:
+				# TODO: Better explanation of why this raises an error.
 				raise ModuleNotFoundError(not_existing_module_error)
 			new_module = import_module(module_name)
 			for clss in class_names:
 				f: Any | None = getattr(new_module, clss, None)
-				if not isinstance(f, Gtk.Widget):
+				if not (isinstance(f, Gtk.Widget) or GObject.type_is_a(f.__gtype__, Gtk.Widget.__gtype__)): # type: ignore
 					raise ImportError(name_not_widget_error.format(clss=clss))
-				_widgets[clss] = new_module
+				_widgets[f"{identifier}:{clss}"] = new_module
 			return
 		new_module = import_module(f".widgets.{name}", package="selvedge")
 		func: Any | None = getattr(new_module, 'main', None)
@@ -60,8 +64,8 @@ def _create_widget(name: str, **kwargs) -> Any:
 	name = name.strip()
 	module_kwargs: dict[str, Any] | None = kwargs.get(name)
 	module: ModuleType = _widgets[name]
-	# TODO: Being able to import a class. See `_assert_secure_module` function.
-	func: Callable = getattr(module, 'main')
+	object_imported: str = 'main' if ':' not in name else name.split(":")[-1]
+	func: Callable = getattr(module, object_imported)
 	if module_kwargs is None: return func()
 	return func(**module_kwargs)
 
